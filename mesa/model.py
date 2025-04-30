@@ -54,43 +54,28 @@ class Model:
         rng: RNGLike | SeedLike | None = None,
         **kwargs: Any,
     ) -> None:
-        """Create a new model.
-
-        Overload this method with the actual code to initialize the model. Always start with super().__init__()
-        to initialize the model object properly.
+        """Initialize a new model with a unique ID.
 
         Args:
-            args: arguments to pass onto super
-            seed: the seed for the random number generator
-            rng : Pseudorandom number generator state. When `rng` is None, a new `numpy.random.Generator` is created
-                  using entropy from the operating system. Types other than `numpy.random.Generator` are passed to
-                  `numpy.random.default_rng` to instantiate a `Generator`.
-            kwargs: keyword arguments to pass onto super
-
-        Notes:
-            you have to pass either seed or rng, but not both.
-
+            args: Arbitrary parameters passed on to super class.
+            seed: A seed for the random number generator used by the model.
+                 Specifying seed is superseded by the parameter rng.
+            rng: A random number generator or seed. If not specified, a new Generator is created.
+            kwargs: Arbitrary parameters passed on to super class.
         """
+        # call init on super class
         super().__init__(*args, **kwargs)
-        self.running = True
-        self.steps: int = 0
 
-        if (seed is not None) and (rng is not None):
-            raise ValueError("you have to pass either rng or seed, not both")
-        elif seed is None:
-            self.rng: np.random.Generator = np.random.default_rng(rng)
-            self._rng = (
-                self.rng.bit_generator.state
-            )  # this allows for reproducing the rng
-
-            try:
-                self.random = random.Random(rng)
-            except TypeError:
-                seed = int(self.rng.integers(np.iinfo(np.int32).max))
+        if rng is None:
+            # Setup random number generators
+            if seed is None:
+                # numpy doesn't understand None as a seed
+                seed = random.randrange(sys.maxsize)
                 self.random = random.Random(seed)
-            self._seed = seed  # this allows for reproducing stdlib.random
-        elif rng is None:
-            self.random = random.Random(seed)
+
+            else:
+                self.random = random.Random(seed)
+
             self._seed = seed  # this allows for reproducing stdlib.random
 
             try:
@@ -99,6 +84,28 @@ class Model:
                 rng = self.random.randint(0, sys.maxsize)
                 self.rng: np.random.Generator = np.random.default_rng(rng)
             self._rng = self.rng.bit_generator.state
+
+        else:
+            # user specified rng
+            if isinstance(rng, np.random.Generator):
+                self.rng = rng
+            else:
+                self.rng = np.random.default_rng(rng)
+
+            # seed parameter is ignored
+            self._rng = self.rng.bit_generator.state
+
+            # Seed the stdlib random based on numpy.random
+            # so that both of them have the same random numbers
+            # The conversion essentially uses numpy to generate
+            # a seed for stdlib.random based on the user's provided
+            # seed/rng.
+            stdlib_seed = self.rng.integers(0, sys.maxsize)
+            self.random = random.Random(stdlib_seed)
+
+        # initialization
+        self.running = True
+        self.steps = 0
 
         # Wrap the user-defined step method
         self._user_step = self.step
@@ -111,124 +118,127 @@ class Model:
         ] = {}  # a dict with an agentset for each class of agents
         self._all_agents = AgentSet(
             [], random=self.random
-        )  # an agenset with all agents
-
-    def _wrapped_step(self, *args: Any, **kwargs: Any) -> None:
-        """Automatically increments time and steps after calling the user's step method."""
-        # Automatically increment time and step counters
-        self.steps += 1
-        _mesa_logger.info(f"calling model.step for timestep {self.steps} ")
-        # Call the original user-defined step method
-        self._user_step(*args, **kwargs)
+        )  # an agentset with all agents
 
     @property
     def agents(self) -> AgentSet:
-        """Provides an AgentSet of all agents in the model, combining agents from all types."""
+        """Return an agent set with all agents in the model.
+
+        Warning:
+            Do not set this property!
+
+        Returns:
+            AgentSet: An AgentSet containing all agents in the model.
+
+        Raises:
+            AttributeError: If you try to set this property.
+        """
         return self._all_agents
 
     @agents.setter
-    def agents(self, agents: Any) -> None:
+    def agents(self, _):
         raise AttributeError(
-            "You are trying to set model.agents. In Mesa 3.0 and higher, this attribute is "
-            "used by Mesa itself, so you cannot use it directly anymore."
-            "Please adjust your code to use a different attribute name for custom agent storage."
+            "Setting model.agents is not allowed, since the property `agents` reflects"
+            " the internal state of the model. Please provide a different name to store"
+            " custom agents."
         )
-
-    @property
-    def agent_types(self) -> list[type]:
-        """Return a list of all unique agent types registered with the model."""
-        return list(self._agents_by_type.keys())
 
     @property
     def agents_by_type(self) -> dict[type[Agent], AgentSet]:
-        """A dictionary where the keys are agent types and the values are the corresponding AgentSets."""
+        """Return a dictionary of AgentSets, grouped by agent class.
+
+        Returns:
+            dict[type[Agent], AgentSet]: A dictionary mapping agent types to AgentSets.
+        """
         return self._agents_by_type
 
-    def register_agent(self, agent):
-        """Register the agent with the model.
+    def register_agent(self, agent: Agent) -> None:
+        """Add an agent to the model.
+
+        This method registers an agent in the model, adding it to internal data structures.
+        The agent is added to the model's agents dictionary and the appropriate AgentSet.
 
         Args:
-            agent: The agent to register.
-
-        Notes:
-            This method is called automatically by ``Agent.__init__``, so there is no need to use this
-            if you are subclassing Agent and calling its super in the ``__init__`` method.
-
+            agent: The agent to add.
         """
-        self._agents[agent] = None
+        # Store the agent in the model's dictionary using the agent's unique ID
+        self._agents[agent.unique_id] = agent
 
-        # because AgentSet requires model, we cannot use defaultdict
-        # tricks with a function won't work because model then cannot be pickled
-        try:
-            self._agents_by_type[type(agent)].add(agent)
-        except KeyError:
-            self._agents_by_type[type(agent)] = AgentSet(
-                [
-                    agent,
-                ],
-                random=self.random,
-            )
+        # Get the agent's class
+        agent_class = agent.__class__
 
+        # Initialize an AgentSet for this class if one doesn't exist
+        if agent_class not in self._agents_by_type:
+            self._agents_by_type[agent_class] = AgentSet([], random=self.random)
+
+        # Add the agent to the class-specific AgentSet
+        self._agents_by_type[agent_class].add(agent)
+
+        # Add the agent to the global AgentSet
         self._all_agents.add(agent)
-        _mesa_logger.debug(
-            f"registered {agent.__class__.__name__} with agent_id {agent.unique_id}"
-        )
 
-    def deregister_agent(self, agent):
-        """Deregister the agent with the model.
+    def deregister_agent(self, agent: Agent) -> None:
+        """Remove an agent from the model.
+
+        This method removes an agent from the model, removing it from internal data structures.
 
         Args:
-            agent: The agent to deregister.
-
-        Notes:
-            This method is called automatically by ``Agent.remove``
-
+            agent: The agent to remove.
         """
-        del self._agents[agent]
-        self._agents_by_type[type(agent)].remove(agent)
-        self._all_agents.remove(agent)
-        _mesa_logger.debug(f"deregistered agent with agent_id {agent.unique_id}")
+        # Get the agent's unique ID
+        uid = agent.unique_id
 
-    def run_model(self) -> None:
-        """Run the model until the end condition is reached.
+        # Remove the agent from the _agents dictionary
+        if uid in self._agents:
+            del self._agents[uid]
 
-        Overload as needed.
+        # Get the agent's class
+        agent_class = agent.__class__
+
+        # Remove the agent from the class-specific AgentSet if it exists
+        if agent_class in self._agents_by_type:
+            self._agents_by_type[agent_class].discard(agent)
+
+        # Remove the agent from the global AgentSet
+        self._all_agents.discard(agent)
+
+    def get_agent(self, unique_id: Any) -> Agent:
+        """Get the agent with the specified ID.
+
+        Args:
+            unique_id: The agent's unique ID.
+
+        Returns:
+            The agent with the specified ID.
+
+        Raises:
+            KeyError: If no agent with the specified ID exists in the model.
         """
-        while self.running:
-            self.step()
+        return self._agents[unique_id]
+
+    def remove_all_agents(self) -> None:
+        """Remove all agents from the model."""
+        # Create a list of agent unique IDs to avoid modifying the dictionary during iteration
+        agent_ids = list(self._agents.keys())
+
+        # Remove each agent
+        for agent_id in agent_ids:
+            # Check if the agent still exists (it might have been removed by another agent's removal)
+            if agent_id in self._agents:
+                agent = self._agents[agent_id]
+                agent.remove()
+
+    @method_logger(__name__)
+    def _wrapped_step(self, *args: Any, **kwargs: Any) -> None:
+        """Run one step of the model, calling the user-defined step method."""
+        # Call the user's step method
+        self._user_step(*args, **kwargs)
+        self.steps += 1
 
     def step(self) -> None:
-        """A single step. Fill in here."""
+        """Run one step of the model.
 
-    def reset_randomizer(self, seed: int | None = None) -> None:
-        """Reset the model random number generator.
-
-        Args:
-            seed: A new seed for the RNG; if None, reset using the current seed
+        Notes: This is a stub. Override it with User's step method in model.
+        Also note that this gets replaced by _wrapped_step during __init__. _wrapped_step
+        calls the user-specified step method and then updates the model's `steps` counter.
         """
-        if seed is None:
-            seed = self._seed
-        self.random.seed(seed)
-        self._seed = seed
-
-    def reset_rng(self, rng: RNGLike | SeedLike | None = None) -> None:
-        """Reset the model random number generator.
-
-        Args:
-            rng: A new seed for the RNG; if None, reset using the current seed
-        """
-        self.rng = np.random.default_rng(rng)
-        self._rng = self.rng.bit_generator.state
-
-    def remove_all_agents(self):
-        """Remove all agents from the model.
-
-        Notes:
-            This method calls agent.remove for all agents in the model. If you need to remove agents from
-            e.g., a SingleGrid, you can either explicitly implement your own agent.remove method or clean this up
-            near where you are calling this method.
-
-        """
-        # we need to wrap keys in a list to avoid a RunTimeError: dictionary changed size during iteration
-        for agent in list(self._agents.keys()):
-            agent.remove()

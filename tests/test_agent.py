@@ -44,6 +44,24 @@ class AgentDoTest(Agent):
         self.agent_set.remove(self)
 
 
+class MockAgent(Agent):
+    """Agent class for testing weak references."""
+
+    def __init__(self, model):
+        """Initialize a MockAgent.
+
+        Args:
+            model (Model): the model to which the agent belongs
+        """
+        super().__init__(model)
+
+
+@pytest.fixture
+def model():
+    """Return a simple model instance for testing."""
+    return Model()
+
+
 def test_agent_removal():
     """Test agent removal."""
     model = Model()
@@ -682,3 +700,24 @@ def test_agentset_groupby():
     assert custom_result[False] == custom_agg(
         [agent.value for agent in agents if not agent.even]
     )
+
+
+def test_weak_agent_ref_mixed_collections(model):
+    """Test that WeakAgentRef works correctly with mixed collections."""
+    # Create an agent
+    agent1 = MockAgent(model)
+
+    # Create a mixed list with an agent and a string
+    mixed_list = [agent1, "hello"]
+
+    # Verify the list works as expected
+    assert mixed_list[0] == agent1
+    assert mixed_list[1] == "hello"
+
+    # Create another list with the agent's weak reference and a string
+    weak_ref = agent1.get_weak_ref()
+    mixed_list_with_ref = [weak_ref, "world"]
+
+    # Verify the weak reference works as expected
+    assert mixed_list_with_ref[0]() == agent1
+    assert mixed_list_with_ref[1] == "world"

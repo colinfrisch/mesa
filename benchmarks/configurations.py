@@ -1,5 +1,12 @@
 """configurations for benchmarks."""
 
+import os
+import sys
+
+# Add the parent directory to the path so we can import mesa
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from benchmarks.weak_ref_benchmark_model import WeakRefBenchmarkModel
 from mesa.examples import BoidFlockers, BoltzmannWealth, Schelling, WolfSheep
 
 configurations = {
@@ -106,6 +113,53 @@ configurations = {
                 "width": 150,
                 "height": 150,
                 "vision": 15,
+            },
+        },
+    },
+    # WeakRef Benchmark Configurations
+    WeakRefBenchmarkModel: {
+        "small": {
+            "seeds": 20,
+            "replications": 5,
+            "steps": 50,
+            "parameters": {
+                "num_agents": 100,
+                "connection_density": 0.1,
+                "agent_turnover": 0.05,
+                "use_weakref": True,
+            },
+        },
+        "standard": {
+            "seeds": 20,
+            "replications": 5,
+            "steps": 50,
+            "parameters": {
+                "num_agents": 100,
+                "connection_density": 0.1,
+                "agent_turnover": 0.05,
+                "use_weakref": False,
+            },
+        },
+        "large": {
+            "seeds": 10,
+            "replications": 3,
+            "steps": 20,
+            "parameters": {
+                "num_agents": 1000,
+                "connection_density": 0.05,
+                "agent_turnover": 0.1,
+                "use_weakref": True,
+            },
+        },
+        "large_standard": {
+            "seeds": 10,
+            "replications": 3,
+            "steps": 20,
+            "parameters": {
+                "num_agents": 1000,
+                "connection_density": 0.05,
+                "agent_turnover": 0.1,
+                "use_weakref": False,
             },
         },
     },

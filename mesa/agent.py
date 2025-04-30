@@ -11,7 +11,6 @@ import contextlib
 import copy
 import functools
 import itertools
-import operator
 import warnings
 import weakref
 from collections import defaultdict
@@ -19,7 +18,7 @@ from collections.abc import Callable, Hashable, Iterable, Iterator, MutableSet, 
 from random import Random
 
 # mypy
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, overload
 
 import numpy as np
 
@@ -28,6 +27,224 @@ if TYPE_CHECKING:
     # dependency.
     from mesa.model import Model
     from mesa.space import Position
+
+
+T = TypeVar("T", bound="Agent")
+
+
+class WeakAgentRef(Generic[T]):
+    """A wrapper class that automatically creates weak references to Agent instances.
+
+    This class acts as a transparent proxy to an Agent instance, automatically creating
+    weak references when agents are stored in collections or variables. This helps prevent
+    memory leaks and circular references in complex models.
+
+    When an agent is garbage collected, any WeakAgentRef to that agent will automatically
+    return None or raise an exception depending on the context.
+
+    Attributes:
+        _weak_ref (weakref.ref): The weak reference to the agent
+
+    Notes:
+        This is used internally by Mesa to ensure proper memory management. Users
+        typically do not need to create WeakAgentRef instances directly.
+    """
+
+    def __init__(self, agent: T):
+        """Initialize a weak reference to an agent.
+
+        Args:
+            agent (Agent): The agent to create a weak reference to
+        """
+        if isinstance(agent, WeakAgentRef):
+            # If already a WeakAgentRef, use its target
+            self._weak_ref = agent._weak_ref
+        elif isinstance(agent, Agent):
+            # Create a new weak reference
+            self._weak_ref = weakref.ref(agent)
+        else:
+            raise TypeError(f"Expected Agent instance, got {type(agent).__name__}")
+
+    def __call__(self) -> T | None:
+        """Get the referenced agent or None if it has been garbage collected.
+
+        Returns:
+            The agent object or None if it has been garbage collected
+        """
+        return self._weak_ref()
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward attribute access to the referenced agent.
+
+        Args:
+            name: The name of the attribute to access
+
+        Returns:
+            The attribute from the referenced agent
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            raise ReferenceError("Weakly referenced agent no longer exists")
+        return getattr(agent, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Forward attribute assignment to the referenced agent.
+
+        Args:
+            name: The name of the attribute to set
+            value: The value to set
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        if name == "_weak_ref":
+            # Special case for setting up the weak reference
+            super().__setattr__(name, value)
+        else:
+            agent = self._weak_ref()
+            if agent is None:
+                raise ReferenceError("Weakly referenced agent no longer exists")
+            setattr(agent, name, value)
+
+    def __eq__(self, other: Any) -> bool:
+        """Compare the referenced agent with another object.
+
+        Args:
+            other: The object to compare with
+
+        Returns:
+            True if the referenced agent equals the other object, False otherwise
+        """
+        if isinstance(other, WeakAgentRef):
+            other_agent = other._weak_ref()
+            if other_agent is None:
+                return False
+            other = other_agent
+
+        agent = self._weak_ref()
+        if agent is None:
+            return False
+
+        return agent == other
+
+    def __hash__(self) -> int:
+        """Get the hash of the referenced agent.
+
+        Returns:
+            The hash of the referenced agent
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            raise ReferenceError("Weakly referenced agent no longer exists")
+        return hash(agent)
+
+    def __repr__(self) -> str:
+        """Get a string representation of the referenced agent.
+
+        Returns:
+            A string representation of the referenced agent or an indication that
+            it has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            return "<WeakAgentRef: agent has been garbage collected>"
+        return f"<WeakAgentRef to {agent!r}>"
+
+    # Support for list and other collection operations
+    def __str__(self) -> str:
+        """Get a string representation of the referenced agent.
+
+        Returns:
+            A string representation of the referenced agent or an indication that
+            it has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            return "<Agent has been garbage collected>"
+        return str(agent)
+
+    # Support common magic methods by forwarding to the referenced agent
+    def __lt__(self, other):
+        """Compare if this weakly referenced agent is less than another object.
+
+        Args:
+            other: The object to compare with
+
+        Returns:
+            bool: Result of the comparison
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            raise ReferenceError("Weakly referenced agent no longer exists")
+        if isinstance(other, WeakAgentRef):
+            other = other()
+        return agent < other
+
+    def __gt__(self, other):
+        """Compare if this weakly referenced agent is greater than another object.
+
+        Args:
+            other: The object to compare with
+
+        Returns:
+            bool: Result of the comparison
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            raise ReferenceError("Weakly referenced agent no longer exists")
+        if isinstance(other, WeakAgentRef):
+            other = other()
+        return agent > other
+
+    def __le__(self, other):
+        """Compare if this weakly referenced agent is less than or equal to another object.
+
+        Args:
+            other: The object to compare with
+
+        Returns:
+            bool: Result of the comparison
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            raise ReferenceError("Weakly referenced agent no longer exists")
+        if isinstance(other, WeakAgentRef):
+            other = other()
+        return agent <= other
+
+    def __ge__(self, other):
+        """Compare if this weakly referenced agent is greater than or equal to another object.
+
+        Args:
+            other: The object to compare with
+
+        Returns:
+            bool: Result of the comparison
+
+        Raises:
+            ReferenceError: If the referenced agent has been garbage collected
+        """
+        agent = self._weak_ref()
+        if agent is None:
+            raise ReferenceError("Weakly referenced agent no longer exists")
+        if isinstance(other, WeakAgentRef):
+            other = other()
+        return agent >= other
 
 
 class Agent:
@@ -67,6 +284,14 @@ class Agent:
         self.unique_id: int = next(self._ids[model])
         self.pos: Position | None = None
         self.model.register_agent(self)
+
+    def get_weak_ref(self) -> WeakAgentRef:
+        """Create a weak reference to this agent.
+
+        Returns:
+            WeakAgentRef: A weak reference wrapper for this agent
+        """
+        return WeakAgentRef(self)
 
     def remove(self) -> None:
         """Remove and delete the agent from the model.
@@ -156,8 +381,8 @@ class AgentSet(MutableSet, Sequence):
     Notes:
         The AgentSet maintains weak references to agents, allowing for efficient management of agent lifecycles
         without preventing garbage collection. It is associated with a specific model instance, enabling
-        interactions with the model's environment and other agents.The implementation uses a WeakKeyDictionary to store agents,
-        which means that agents not referenced elsewhere in the program may be automatically removed from the AgentSet.
+        interactions with the model's environment and other agents. The implementation uses WeakAgentRef
+        instances to store agents, which automatically handles weak reference management.
 
     Notes:
         A `UserWarning` is issued if `random=None`. You can resolve this warning by explicitly
@@ -183,19 +408,31 @@ class AgentSet(MutableSet, Sequence):
                 Random()
             )  # FIXME see issue 1981, how to get the central rng from model
         self.random = random
-        self._agents = weakref.WeakKeyDictionary({agent: None for agent in agents})
+        # Use a standard dictionary instead of WeakKeyDictionary since we're already using WeakAgentRef
+        self._agents = {WeakAgentRef(agent): None for agent in agents}
 
     def __len__(self) -> int:
         """Return the number of agents in the AgentSet."""
+        # Filter out any null references before counting
+        self._cleanup_null_refs()
         return len(self._agents)
+
+    def _cleanup_null_refs(self):
+        """Remove any weak references to agents that have been garbage collected."""
+        # Create a new dict without the null references
+        self._agents = {ref: None for ref in self._agents if ref() is not None}
 
     def __iter__(self) -> Iterator[Agent]:
         """Provide an iterator over the agents in the AgentSet."""
-        return self._agents.keys()
+        # Clean up before iteration to avoid yielding None
+        self._cleanup_null_refs()
+        # Return actual agent objects, not the weak references
+        return (ref() for ref in self._agents)
 
     def __contains__(self, agent: Agent) -> bool:
         """Check if an agent is in the AgentSet. Can be used like `agent in agentset`."""
-        return agent in self._agents
+        # Create a weak reference to the agent for comparison
+        return any(ref() is agent for ref in self._agents if ref() is not None)
 
     def select(
         self,
@@ -232,9 +469,13 @@ class AgentSet(MutableSet, Sequence):
 
         def agent_generator(filter_func, agent_type, at_most):
             count = 0
-            for agent in self:
+            for agent_ref in list(self._agents):
+                if (agent := agent_ref()) is None:
+                    continue
+
                 if count >= at_most:
                     break
+
                 if (not filter_func or filter_func(agent)) and (
                     not agent_type or isinstance(agent, agent_type)
                 ):
@@ -256,13 +497,16 @@ class AgentSet(MutableSet, Sequence):
 
         Note:
             Using inplace = True is more performant
-
         """
-        weakrefs = list(self._agents.keyrefs())
+        # Clean up null references first
+        self._cleanup_null_refs()
+
+        # Get list of WeakAgentRef keys
+        weakrefs = list(self._agents)
         self.random.shuffle(weakrefs)
 
         if inplace:
-            self._agents.data = {entry: None for entry in weakrefs}
+            self._agents = {ref: None for ref in weakrefs}
             return self
         else:
             return AgentSet(
@@ -285,10 +529,37 @@ class AgentSet(MutableSet, Sequence):
         Returns:
             AgentSet: A sorted AgentSet. Returns the current AgentSet if inplace is True.
         """
-        if isinstance(key, str):
-            key = operator.attrgetter(key)
+        # Clean up null references first
+        self._cleanup_null_refs()
 
-        sorted_agents = sorted(self._agents.keys(), key=key, reverse=not ascending)
+        if isinstance(key, str):
+            key_attr = key  # Store the attribute name
+
+            # Get the agent from the WeakAgentRef and then get the attribute
+            def key_func(ref):
+                """Get attribute value from referenced agent if it exists."""
+                agent = ref()
+                return getattr(agent, key_attr) if agent is not None else None
+        else:
+            # Wrap the original key function to handle weak references
+            original_key = key
+
+            def key_func(ref):
+                """Apply original key function to referenced agent if it exists."""
+                agent = ref()
+                return original_key(agent) if agent is not None else None
+
+        # Sort the weak references based on the key
+        sorted_refs = sorted(
+            [
+                ref for ref in self._agents if ref() is not None
+            ],  # Filter out expired refs
+            key=key_func,
+            reverse=not ascending,
+        )
+
+        # Get the actual agents from the sorted weak references
+        sorted_agents = [ref() for ref in sorted_refs if ref() is not None]
 
         return (
             AgentSet(sorted_agents, self.random)
@@ -301,7 +572,7 @@ class AgentSet(MutableSet, Sequence):
 
         This is a private method primarily used internally by other methods like select, shuffle, and sort.
         """
-        self._agents = weakref.WeakKeyDictionary({agent: None for agent in agents})
+        self._agents = {WeakAgentRef(agent): None for agent in agents}
         return self
 
     def do(self, method: str | Callable, *args, **kwargs) -> AgentSet:
@@ -319,14 +590,16 @@ class AgentSet(MutableSet, Sequence):
         Returns:
             AgentSet | list[Any]: The results of the callable calls if return_results is True, otherwise the AgentSet itself.
         """
-        # we iterate over the actual weakref keys and check if weakref is alive before calling the method
+        # Clean up null references first
+        self._cleanup_null_refs()
+
         if isinstance(method, str):
-            for agentref in self._agents.keyrefs():
-                if (agent := agentref()) is not None:
+            for ref in list(self._agents):
+                if (agent := ref()) is not None:
                     getattr(agent, method)(*args, **kwargs)
         else:
-            for agentref in self._agents.keyrefs():
-                if (agent := agentref()) is not None:
+            for ref in list(self._agents):
+                if (agent := ref()) is not None:
                     method(agent, *args, **kwargs)
 
         return self
@@ -336,7 +609,10 @@ class AgentSet(MutableSet, Sequence):
 
         It's a fast, optimized version of calling shuffle() followed by do().
         """
-        weakrefs = list(self._agents.keyrefs())
+        # Clean up null references first
+        self._cleanup_null_refs()
+
+        weakrefs = list(self._agents)
         self.random.shuffle(weakrefs)
 
         if isinstance(method, str):
@@ -365,18 +641,20 @@ class AgentSet(MutableSet, Sequence):
         Returns:
            list[Any]: The results of the callable calls
         """
-        # we iterate over the actual weakref keys and check if weakref is alive before calling the method
+        # Clean up null references first
+        self._cleanup_null_refs()
+
         if isinstance(method, str):
             res = [
                 getattr(agent, method)(*args, **kwargs)
-                for agentref in self._agents.keyrefs()
-                if (agent := agentref()) is not None
+                for ref in self._agents
+                if (agent := ref()) is not None
             ]
         else:
             res = [
                 method(agent, *args, **kwargs)
-                for agentref in self._agents.keyrefs()
-                if (agent := agentref()) is not None
+                for ref in self._agents
+                if (agent := ref()) is not None
             ]
 
         return res
@@ -434,26 +712,27 @@ class AgentSet(MutableSet, Sequence):
             AttributeError: If 'handle_missing' is 'error' and the agent does not have the specified attribute(s).
             ValueError: If an unknown 'handle_missing' option is provided.
         """
+        # Clean up null references first
+        self._cleanup_null_refs()
+
         is_single_attr = isinstance(attr_names, str)
+        agents = [ref() for ref in self._agents if ref() is not None]
 
         if handle_missing == "error":
             if is_single_attr:
-                return [getattr(agent, attr_names) for agent in self._agents]
+                return [getattr(agent, attr_names) for agent in agents]
             else:
                 return [
-                    [getattr(agent, attr) for attr in attr_names]
-                    for agent in self._agents
+                    [getattr(agent, attr) for attr in attr_names] for agent in agents
                 ]
 
         elif handle_missing == "default":
             if is_single_attr:
-                return [
-                    getattr(agent, attr_names, default_value) for agent in self._agents
-                ]
+                return [getattr(agent, attr_names, default_value) for agent in agents]
             else:
                 return [
                     [getattr(agent, attr, default_value) for attr in attr_names]
-                    for agent in self._agents
+                    for agent in agents
                 ]
 
         else:
@@ -472,8 +751,9 @@ class AgentSet(MutableSet, Sequence):
         Returns:
             AgentSet: The AgentSet instance itself, after setting the attribute.
         """
-        for agent in self:
-            setattr(agent, attr_name, value)
+        for ref in list(self._agents):
+            if (agent := ref()) is not None:
+                setattr(agent, attr_name, value)
         return self
 
     def __getitem__(self, item: int | slice) -> Agent:
@@ -485,7 +765,12 @@ class AgentSet(MutableSet, Sequence):
         Returns:
             Agent | list[Agent]: The selected agent or list of agents based on the index or slice provided.
         """
-        return list(self._agents.keys())[item]
+        # Clean up null references first
+        self._cleanup_null_refs()
+
+        # Get list of actual agents, not weak references
+        agents = [ref() for ref in self._agents if ref() is not None]
+        return agents[item]
 
     def add(self, agent: Agent):
         """Add an agent to the AgentSet.
@@ -496,7 +781,7 @@ class AgentSet(MutableSet, Sequence):
         Note:
             This method is an implementation of the abstract method from MutableSet.
         """
-        self._agents[agent] = None
+        self._agents[WeakAgentRef(agent)] = None
 
     def discard(self, agent: Agent):
         """Remove an agent from the AgentSet if it exists.
@@ -509,8 +794,10 @@ class AgentSet(MutableSet, Sequence):
         Note:
             This method is an implementation of the abstract method from MutableSet.
         """
-        with contextlib.suppress(KeyError):
-            del self._agents[agent]
+        for ref in list(self._agents):
+            if ref() is agent:
+                del self._agents[ref]
+                return
 
     def remove(self, agent: Agent):
         """Remove an agent from the AgentSet.
@@ -523,7 +810,11 @@ class AgentSet(MutableSet, Sequence):
         Note:
             This method is an implementation of the abstract method from MutableSet.
         """
-        del self._agents[agent]
+        for ref in list(self._agents):
+            if ref() is agent:
+                del self._agents[ref]
+                return
+        raise KeyError(agent)
 
     def __getstate__(self):
         """Retrieve the state of the AgentSet for serialization.
@@ -531,7 +822,12 @@ class AgentSet(MutableSet, Sequence):
         Returns:
             dict: A dictionary representing the state of the AgentSet.
         """
-        return {"agents": list(self._agents.keys()), "random": self.random}
+        # Clean up null references first
+        self._cleanup_null_refs()
+
+        # Get actual agent objects, not weak references
+        agents = [ref() for ref in self._agents if ref() is not None]
+        return {"agents": agents, "random": self.random}
 
     def __setstate__(self, state):
         """Set the state of the AgentSet during deserialization.
@@ -563,13 +859,19 @@ class AgentSet(MutableSet, Sequence):
         of an AgentSet.
 
         """
+        # Clean up null references first
+        self._cleanup_null_refs()
+
         groups = defaultdict(list)
 
+        # Get actual agent objects from weak references
+        agents = [ref() for ref in self._agents.keys if ref() is not None]
+
         if isinstance(by, Callable):
-            for agent in self:
+            for agent in agents:
                 groups[by(agent)].append(agent)
         else:
-            for agent in self:
+            for agent in agents:
                 groups[getattr(agent, by)].append(agent)
 
         if result_type == "agentset":
