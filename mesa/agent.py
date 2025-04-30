@@ -67,6 +67,27 @@ class Agent:
         self.pos: Position | None = None
         self.model.register_agent(self)
 
+    def __setattr__(self, name, value):
+        """Set an attribute on the agent.
+
+        If the value is an Agent, store it as a weak reference.
+        """
+        if isinstance(value, Agent):
+            super().__setattr__(name, weakref.ref(value))
+        else:
+            super().__setattr__(name, value)
+
+    def __getattribute__(self, name):
+        """Adds to the default get attribute method to automate weakreferencing.
+
+        If the attribute is a weak reference, dereference it.
+        """
+        value = super().__getattribute__(name)
+        # Automatically dereference weakref.ref objects
+        if isinstance(value, weakref.ref):
+            return value()
+        return value
+
     def remove(self) -> None:
         """Remove and delete the agent from the model.
 
